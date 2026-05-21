@@ -130,7 +130,59 @@ def _is_leaf(v):
     return not isinstance(v, (dict, list))
 
 
-def build_diff_tree(base_val, other_val):
+def _parse_ignore_tokens(text):
+    if not text:
+        return []
+    parts = []
+    for raw in text.replace("\n", " ").split(","):
+        s = raw.strip().strip('"').strip("'").strip()
+        if not s:
+            continue
+        parts.append(s)
+    return parts
+
+
+def load_ignore_paths(path):
+    abs_path = os.path.abspath(path)
+    try:
+        with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+            text = f.read()
+    except Exception:
+        return {}
+    tokens = _parse_ignore_tokens(text)
+    out = {}
+    for t in tokens:
+        segs = []
+        for s in str(t).split("."):
+            s = s.strip()
+            if not s:
+                continue
+            if s.isdigit():
+                try:
+                    segs.append(int(s))
+                    continue
+                except Exception:
+                    pass
+            segs.append(s)
+        if segs:
+            tup = tuple(segs)
+            out.setdefault(tup[-1], []).append(tup)
+    return out
+
+
+def _should_ignore(path, ignore_paths):
+    if not ignore_paths or not path:
+        return False
+    cand = ignore_paths.get(path[-1]) or []
+    for t in cand:
+        if len(path) >= len(t) and path[-len(t):] == t:
+            return True
+    return False
+
+
+def build_diff_tree(base_val, other_val, ignore_paths=None, path=()):
+    if _should_ignore(path, ignore_paths):
+        return None
     if isinstance(base_val, dict) and isinstance(other_val, dict):
         keys = set(base_val.keys()) | set(other_val.keys())
         children = {}
@@ -139,13 +191,19 @@ def build_diff_tree(base_val, other_val):
             in_base = k in base_val
             in_other = k in other_val
             if (not in_base) and in_other:
-                node = build_diff_tree(None, other_val[k])
+                node = build_diff_tree(None, other_val[k], ignore_paths=ignore_paths, path=path + (k,))
+                if node is None:
+                    continue
                 node["status"] = "added"
             elif in_base and (not in_other):
-                node = build_diff_tree(base_val[k], None)
+                node = build_diff_tree(base_val[k], None, ignore_paths=ignore_paths, path=path + (k,))
+                if node is None:
+                    continue
                 node["status"] = "removed"
             else:
-                node = build_diff_tree(base_val[k], other_val[k])
+                node = build_diff_tree(base_val[k], other_val[k], ignore_paths=ignore_paths, path=path + (k,))
+                if node is None:
+                    continue
             children[k] = node
             if node["status"] != "unchanged":
                 status = "changed"
@@ -159,13 +217,19 @@ def build_diff_tree(base_val, other_val):
             in_base = i < len(base_val)
             in_other = i < len(other_val)
             if (not in_base) and in_other:
-                node = build_diff_tree(None, other_val[i])
+                node = build_diff_tree(None, other_val[i], ignore_paths=ignore_paths, path=path + (i,))
+                if node is None:
+                    continue
                 node["status"] = "added"
             elif in_base and (not in_other):
-                node = build_diff_tree(base_val[i], None)
+                node = build_diff_tree(base_val[i], None, ignore_paths=ignore_paths, path=path + (i,))
+                if node is None:
+                    continue
                 node["status"] = "removed"
             else:
-                node = build_diff_tree(base_val[i], other_val[i])
+                node = build_diff_tree(base_val[i], other_val[i], ignore_paths=ignore_paths, path=path + (i,))
+                if node is None:
+                    continue
             children[i] = node
             if node["status"] != "unchanged":
                 status = "changed"
@@ -176,11 +240,31 @@ def build_diff_tree(base_val, other_val):
 
     if base_val is None and other_val is not None:
         return {"type": "value" if _is_leaf(other_val) else ("array" if isinstance(other_val, list) else "object"),
-                "status": "added", "base": None, "other": other_val, "children": None if _is_leaf(other_val) else build_diff_tree({} if isinstance(other_val, dict) else [], other_val)["children"]}
+                "status": "added",
+                "base": None,
+                "other": other_val,
+                "children": None
+                if _is_leaf(other_val)
+                else build_diff_tree(
+                    {} if isinstance(other_val, dict) else [],
+                    other_val,
+                    ignore_paths=ignore_paths,
+                    path=path,
+                )["children"]}
 
     if base_val is not None and other_val is None:
         return {"type": "value" if _is_leaf(base_val) else ("array" if isinstance(base_val, list) else "object"),
-                "status": "removed", "base": base_val, "other": None, "children": None if _is_leaf(base_val) else build_diff_tree(base_val, {} if isinstance(base_val, dict) else [])["children"]}
+                "status": "removed",
+                "base": base_val,
+                "other": None,
+                "children": None
+                if _is_leaf(base_val)
+                else build_diff_tree(
+                    base_val,
+                    {} if isinstance(base_val, dict) else [],
+                    ignore_paths=ignore_paths,
+                    path=path,
+                )["children"]}
 
     if (isinstance(base_val, (dict, list)) and _is_leaf(other_val)) or (_is_leaf(base_val) and isinstance(other_val, (dict, list))):
         return {"type": "value", "status": "type_changed", "base": base_val, "other": other_val, "children": None}
@@ -382,4 +466,3 @@ def html_report(tree, base_title, other_title, meta=None):
         esc(_json_repr(meta)),
         body_html,
     )
-

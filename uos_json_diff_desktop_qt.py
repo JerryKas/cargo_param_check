@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from jsondiff_engine import ParseError, build_diff_tree, diff_summary, html_report, parse_json_file
+from jsondiff_engine import ParseError, build_diff_tree, diff_summary, html_report, load_ignore_paths, parse_json_file
 
 
 APP_TITLE = "UOS JSON Diff"
@@ -54,6 +54,12 @@ NAME_TO_UVIN = {
     "AET#1_GS": "t30_22.2ucvd32.car5",
 }
 UVIN_TO_NAME = {v: k for k, v in NAME_TO_UVIN.items()}
+
+
+def _resource_path(rel_path):
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return os.path.join(getattr(sys, "_MEIPASS"), rel_path)
+    return os.path.join(os.path.dirname(__file__), rel_path)
 
 
 def _safe_basename(p):
@@ -711,6 +717,9 @@ class MainWindow(QMainWindow):
         self.diff_cache = {}
 
         self._only_diff = True
+        self._ignore_default = True
+        self._ignore_file = _resource_path("default_ignore_configs.txt")
+        self._ignore_paths = load_ignore_paths(self._ignore_file)
         self._build_ui()
         self._apply_theme()
 
@@ -763,6 +772,11 @@ class MainWindow(QMainWindow):
         self.recursive_box = QCheckBox("递归扫描")
         self.recursive_box.setChecked(True)
         toolbar.addWidget(self.recursive_box)
+
+        self.ignore_box = QCheckBox("忽略默认参数")
+        self.ignore_box.setChecked(True)
+        self.ignore_box.stateChanged.connect(self._toggle_ignore_default)
+        toolbar.addWidget(self.ignore_box)
 
         toolbar.addSeparator()
 
@@ -1183,6 +1197,7 @@ class MainWindow(QMainWindow):
 
         base_data = self.base_data
         base_title = self.base_title or "base"
+        ignore_paths = self._ignore_paths if self._ignore_default else None
 
         def job():
             out = {}
@@ -1190,7 +1205,7 @@ class MainWindow(QMainWindow):
                 other = self.valid_files.get(fp)
                 if other is None:
                     continue
-                out[fp] = build_diff_tree(base_data, other)
+                out[fp] = build_diff_tree(base_data, other, ignore_paths=ignore_paths)
             return out
 
         def done(res):
@@ -1215,6 +1230,19 @@ class MainWindow(QMainWindow):
             w = self.tabs.widget(i)
             if isinstance(w, DiffView):
                 w.set_only_diff(self._only_diff)
+
+    def _toggle_ignore_default(self, state):
+        self._ignore_default = bool(state == Qt.CheckState.Checked.value)
+        if self._ignore_default and not self._ignore_paths:
+            self._ignore_paths = load_ignore_paths(self._ignore_file)
+        if self.base_data is None:
+            return
+        self.diff_cache = {}
+        for i in range(self.tabs.count()):
+            w = self.tabs.widget(i)
+            if isinstance(w, DiffView):
+                w.clear("等待对比…")
+        self._compute_all_diffs()
 
     def export_current_html(self):
         w = self.tabs.currentWidget()

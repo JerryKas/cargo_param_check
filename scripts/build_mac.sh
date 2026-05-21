@@ -13,6 +13,6 @@ python -m pip install -U pip wheel
 python -m pip install -r requirements.txt
 python -m pip install pyinstaller
 
-pyinstaller --noconfirm --clean --windowed --name "uos-json-diff" uos_json_diff_desktop_qt.py
+pyinstaller --noconfirm --clean --windowed --name "uos-json-diff" --add-data "default_ignore_configs.txt:." uos_json_diff_desktop_qt.py
 
 echo "Build done: dist/uos-json-diff.app"
