@@ -3,6 +3,7 @@ import shlex
 import subprocess
 import sys
 import time
+import ctypes.util
 
 from PyQt6.QtCore import QEvent, QObject, QRunnable, Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QBrush, QColor, QPalette, QStandardItem, QStandardItemModel
@@ -130,6 +131,35 @@ def _ensure_dir(dir_path):
     if not dir_path:
         return
     os.makedirs(dir_path, exist_ok=True)
+
+
+def _linux_qt_platform_preflight():
+    if sys.platform != "linux":
+        return
+    forced = os.environ.get("QT_QPA_PLATFORM", "").strip().lower()
+    if forced and forced not in ("xcb",):
+        return
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        return
+    lib = ctypes.util.find_library("xcb-cursor") or ctypes.util.find_library("xcb_cursor")
+    if lib:
+        return
+    sys.stderr.write(
+        "\n".join(
+            [
+                "Qt xcb platform plugin 依赖缺失：libxcb-cursor0 / xcb-util-cursor",
+                "",
+                "请安装系统依赖后重试：",
+                "  Debian/Ubuntu: sudo apt-get update && sudo apt-get install -y libxcb-cursor0",
+                "  Fedora/RHEL:   sudo dnf install -y xcb-util-cursor",
+                "  Arch:         sudo pacman -S xcb-util-cursor",
+                "  openSUSE:     sudo zypper install -y libxcb-cursor0",
+                "",
+            ]
+        )
+        + "\n"
+    )
+    raise SystemExit(1)
 
 
 def _build_index_html(entries, base_title, base_path, exported_at):
@@ -1262,6 +1292,7 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    _linux_qt_platform_preflight()
     app = QApplication(sys.argv)
     app.setApplicationName(APP_TITLE)
     w = MainWindow()
